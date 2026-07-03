@@ -1,11 +1,11 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
-#A linear function for fitting
+# A linear function for fitting
 def cfit_lin(x,a,b):
     return a*x + b
 
-def import_from_mca(MCA_input):
+def spectrum_from_mca(MCA_input):
     '''Imports data from an .mca file
 
     Parameters
@@ -15,10 +15,10 @@ def import_from_mca(MCA_input):
     
     Returns
     -------
-    cps_data: 1DArray
-        The counts per second in each bin in the spectrum
-    E_list: 1DArray
-        The energy values corresponding to each bin in the spectrum
+    cps_norm: 1DArray
+        The counts per second in each bin in the spectrum normalized by the bin width in energy
+    E_bins: 1DArray
+        The energy values corresponding to each bin center in the spectrum
     '''
 
     #Data will go here
@@ -84,7 +84,7 @@ def import_from_mca(MCA_input):
                 else: 
                     Calib_ch.append(float(line_str.split(" ")[0]))
                     Calib_E.append(float(line_str.split(" ")[1]))
-    #Convert tu np arrays            
+    #Convert to np arrays            
     Calib_ch_np = np.array(Calib_ch)
     Calib_E_np = np.array(Calib_E)
 
@@ -93,11 +93,45 @@ def import_from_mca(MCA_input):
     a, b = popt
 
     #Creates the channel number array
-    ch_list = np.arange(len(Data_list))
+    ch_bins = np.arange(len(Data_list))
     #Converts channel numbers to energy values
-    E_list = cfit_lin(ch_list, a, b)
+    E_bins = cfit_lin(ch_bins, a, b)
     #Calculates cps
     cps_data = np.array(Data_list)/REAL_TIME
     
-    return [cps_data, E_list]
+    #This is the width of each bin in energy
+    dE = a
+    #Divide the counts by the bin width so different calibrations
+    #can be shown together
+    cps_norm = cps_data/dE
 
+    return [cps_norm, E_bins]
+
+
+def get_Spectra_from_mca(FileName_list_input):
+    '''
+    Creates spectra from multiple .mca files
+
+    Parameters
+    -----------
+    FileName_list_input : list of strings
+        List containing the names of the .mca files that are in the MCA folder. The .mca extension at the end should be omitted.
+    
+    Returns
+    -------
+    cps_norm_list: list of 1DArray
+        List of the normalized cps values, that are the counts per second in each bin in the spectrum normalized by the bin width in energy
+    E_bin_list: list of 1DArray
+        List of the energy bin centers for each spectrum
+    '''
+    cps_norm_list = []
+    E_bin_list = []
+    #Looping through the input files
+    for file in FileName_list_input:
+        #Using the previous function to get the spectra
+        cps_norm, E_bin = spectrum_from_mca(f'MCA/{file}.mca')
+        #Storing the spectra in the predefined lists
+        cps_norm_list.append(cps_norm)
+        E_bin_list.append(E_bin)
+
+    return [cps_norm_list, E_bin_list]
