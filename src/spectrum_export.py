@@ -100,6 +100,7 @@ def spectrum_from_mca(MCA_input):
     cps_data = np.array(Data_list)/REAL_TIME
     
     #This is the width of each bin in energy
+    #TODO: Should make this more general if calibration is not linear
     dE = a
     #Divide the counts by the bin width so different calibrations
     #can be shown together
