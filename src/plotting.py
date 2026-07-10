@@ -1,5 +1,4 @@
 from spectrum_export import get_Spectra_from_mca
-from spectrum_export import Spectrum
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -23,13 +22,8 @@ def plot_spectra(FileName_list, yscale = 'linear', save_as = None, energy_min = 
     '''
 
     N = len(FileName_list)
-    cps_norm_list = []
-    E_edge_list = []
     #Using get_Spectra_from_mca in spectrum_export.py
     Spectrum_list = get_Spectra_from_mca(FileName_list)
-    for i in range(N):
-        cps_norm_list.append(Spectrum_list[i].cps_list)
-        E_edge_list.append(Spectrum_list[i].bin_edge_list)
     #Use Computer Modern fonts, which are the LaTeX default
     plt.rcParams.update({
     "font.family": "serif",
@@ -42,8 +36,9 @@ def plot_spectra(FileName_list, yscale = 'linear', save_as = None, energy_min = 
 
     #Loop through every spectrum
     for i in range(N):
-        #Plot the spectrum using bin edges and counts per bin
-        plt.stairs(cps_norm_list[i], E_edge_list[i], label = f'{FileName_list[i]}')
+
+        #Plot the spectrum using filled bin edges and counts per bin
+        plt.stairs(Spectrum_list[i].cps_list, Spectrum_list[i].bin_edge_list, label = f'{FileName_list[i]}, mean = {Spectrum_list[i].E_mean:.2f} keV')
     
     #Apply the input yscale
     plt.yscale(yscale)
@@ -61,5 +56,5 @@ def plot_spectra(FileName_list, yscale = 'linear', save_as = None, energy_min = 
 
 if __name__ == "__main__":
     #Example usage
-    plot_spectra(['BG', 'Cs_Papir', 'Cs_Ures'], yscale='log', save_as='test', energy_min=5, energy_max=2000)
+    plot_spectra(['BG', 'Cs_Ures', 'Cs_Papir', 'Cs_Viz', 'Cs_Fem'], yscale='linear', save_as='Cs_Peak_lin', energy_min=650, energy_max=670)
 

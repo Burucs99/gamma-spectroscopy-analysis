@@ -18,7 +18,7 @@ class Spectrum:
         E_mean = 0
         for i in range(len(cps_list)):
             E_curr = (bin_edge_list[i]+bin_edge_list[i+1])/2
-            E_mean += E_curr*cps_list
+            E_mean += E_curr*cps_list[i]
         self.E_mean = E_mean/np.sum(cps_list)
 
 # A linear function for fitting
