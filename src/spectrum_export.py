@@ -1,6 +1,26 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
+class Spectrum:
+    '''Stores one spectrum with bin edges, normalized counts, and the mean energy.
+
+    Parameters
+    -----------
+    bin_edge_list : 1DArray
+        The energy values corresponding to the bin edges in the spectrum.
+    cps_list : 1DArray
+        The counts per second in each bin of the spectrum normalized by the bin width in energy.
+    '''
+
+    def __init__(self, bin_edge_list, cps_list):
+        self.bin_edge_list = bin_edge_list
+        self.cps_list = cps_list
+        E_mean = 0
+        for i in range(len(cps_list)):
+            E_curr = (bin_edge_list[i]+bin_edge_list[i+1])/2
+            E_mean += E_curr*cps_list
+        self.E_mean = E_mean/np.sum(cps_list)
+
 # A linear function for fitting
 def cfit_lin(x,a,b):
     return a*x + b
@@ -11,14 +31,12 @@ def spectrum_from_mca(MCA_input):
     Parameters
     -----------
     MCA_input : string
-        Name of the .mca file 
+        Name of the .mca file.
     
     Returns
     -------
-    cps_norm: 1DArray
-        The counts per second in each bin in the spectrum normalized by the bin width in energy
-    E_bins: 1DArray
-        The energy values corresponding to each bin center in the spectrum
+    Spectrum: Spectrum
+        A Spectrum object containing the energy bin edges and the normalized counts per second in each bin.
     '''
 
     #Data will go here
@@ -32,7 +50,6 @@ def spectrum_from_mca(MCA_input):
     #The given calibration value pairs
     Calib_ch = []
     Calib_E = []
-
 
     with open(MCA_input, "r") as file:
 
@@ -94,8 +111,10 @@ def spectrum_from_mca(MCA_input):
 
     #Creates the channel number array
     ch_bins = np.arange(len(Data_list))
+    ch_edges = np.arange(len(Data_list) + 1) - 0.5
     #Converts channel numbers to energy values
     E_bins = cfit_lin(ch_bins, a, b)
+    E_edges = cfit_lin(ch_edges, a, b)
     #Calculates cps
     cps_data = np.array(Data_list)/REAL_TIME
     
@@ -106,12 +125,13 @@ def spectrum_from_mca(MCA_input):
     #can be shown together
     cps_norm = cps_data/dE
 
-    return [cps_norm, E_bins]
-
+    Spect = Spectrum(E_edges, cps_norm)
+    #return [cps_norm, E_bins]
+    return Spect
 
 def get_Spectra_from_mca(FileName_list_input):
     '''
-    Creates spectra from multiple .mca files
+    Creates spectra from multiple .mca files.
 
     Parameters
     -----------
@@ -120,19 +140,17 @@ def get_Spectra_from_mca(FileName_list_input):
     
     Returns
     -------
-    cps_norm_list: list of 1DArray
-        List of the normalized cps values, that are the counts per second in each bin in the spectrum normalized by the bin width in energy
-    E_bin_list: list of 1DArray
-        List of the energy bin centers for each spectrum
+    Spectrum_list: list of Spectrum
+        List of Spectrum objects for each input file.
     '''
-    cps_norm_list = []
-    E_bin_list = []
+    Spectrum_list = []
     #Looping through the input files
     for file in FileName_list_input:
         #Using the previous function to get the spectra
-        cps_norm, E_bin = spectrum_from_mca(f'MCA/{file}.mca')
+        Spect_curr = spectrum_from_mca(f'MCA/{file}.mca')
         #Storing the spectra in the predefined lists
-        cps_norm_list.append(cps_norm)
-        E_bin_list.append(E_bin)
+        Spectrum_list.append(Spect_curr)
+    return Spectrum_list
 
-    return [cps_norm_list, E_bin_list]
+spectrum_from_mca('MCA/BG.mca')
+

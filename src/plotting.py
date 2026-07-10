@@ -1,6 +1,8 @@
 from spectrum_export import get_Spectra_from_mca
+from spectrum_export import Spectrum
 import matplotlib.pyplot as plt
 import numpy as np
+
 
 def plot_spectra(FileName_list, yscale = 'linear', save_as = None, energy_min = 0, energy_max = 1e5):
     '''
@@ -21,9 +23,13 @@ def plot_spectra(FileName_list, yscale = 'linear', save_as = None, energy_min = 
     '''
 
     N = len(FileName_list)
+    cps_norm_list = []
+    E_edge_list = []
     #Using get_Spectra_from_mca in spectrum_export.py
-    cps_norm_list, E_bin_list = get_Spectra_from_mca(FileName_list)
-
+    Spectrum_list = get_Spectra_from_mca(FileName_list)
+    for i in range(N):
+        cps_norm_list.append(Spectrum_list[i].cps_list)
+        E_edge_list.append(Spectrum_list[i].bin_edge_list)
     #Use Computer Modern fonts, which are the LaTeX default
     plt.rcParams.update({
     "font.family": "serif",
@@ -36,17 +42,12 @@ def plot_spectra(FileName_list, yscale = 'linear', save_as = None, energy_min = 
 
     #Loop through every spectrum
     for i in range(N):
-        #Create the energy mask
-        mask_i = (E_bin_list[i] > energy_min) & (E_bin_list[i] < energy_max)
-        #Apply the mask so only the values in the specified energy range are plotted
-        cps_norm_mask_i = cps_norm_list[i][mask_i]
-        E_bin_mask_i = E_bin_list[i][mask_i]
-
-        #Plot the values
-        plt.plot(E_bin_mask_i, cps_norm_mask_i, label = f'{FileName_list[i]}')
+        #Plot the spectrum using bin edges and counts per bin
+        plt.stairs(cps_norm_list[i], E_edge_list[i], label = f'{FileName_list[i]}')
     
     #Apply the input yscale
     plt.yscale(yscale)
+    plt.xlim(energy_min, energy_max)
     plt.xlabel(r'$E \, (\mathrm{keV})$')
     plt.ylabel(r'$CPS/\Delta E \, (\mathrm{s^{-1}\cdot keV^{-1}})$')
     plt.grid()
@@ -58,6 +59,7 @@ def plot_spectra(FileName_list, yscale = 'linear', save_as = None, energy_min = 
 
     plt.show()
 
-#Example usage
-plot_spectra(['BG', 'Cs_Papir', 'Cs_Ures'], yscale='log', save_as='test', energy_min=5, energy_max=2000)
+if __name__ == "__main__":
+    #Example usage
+    plot_spectra(['BG', 'Cs_Papir', 'Cs_Ures'], yscale='log', save_as='test', energy_min=5, energy_max=2000)
 
