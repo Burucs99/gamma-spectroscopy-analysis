@@ -21,6 +21,109 @@ class Spectrum:
             E_mean += E_curr*cps_list[i]
         self.E_mean = E_mean/np.sum(cps_list)
 
+    def bin_widths(self):
+        return np.diff(self.bin_edge_list)
+
+    def to_common_energy_grid(self, target_edges):
+        '''Rebins the spectrum onto a new energy grid while preserving bin integrals.
+
+        Parameters
+        ----------
+        target_edges : 1DArray
+            Monotonic energy bin edges for the new spectrum.
+
+        Returns
+        -------
+        Spectrum
+            A new Spectrum object on the requested energy grid.
+        '''
+        source_edges = np.asarray(self.bin_edge_list)
+        target_edges = np.asarray(target_edges)
+        source_widths = np.diff(source_edges)
+        source_counts_per_second = np.asarray(self.cps_list) * source_widths
+
+        # Cumulative counts per second at the source bin edges.
+        cumulative_counts = np.concatenate(([0.0], np.cumsum(source_counts_per_second)))
+
+        # Interpolate the cumulative histogram at the new edges and differentiate.
+        rebinned_cumulative = np.interp(target_edges, source_edges, cumulative_counts)
+        rebinned_counts_per_second = np.diff(rebinned_cumulative)
+        target_widths = np.diff(target_edges)
+        rebinned_density = rebinned_counts_per_second / target_widths
+
+        return Spectrum(target_edges, rebinned_density)
+
+
+def common_energy_edges(*spectra, step=None):
+    '''Build a shared energy grid for spectra subtraction.
+
+    Parameters
+    ----------
+    spectra : Spectrum
+        One or more spectra to align.
+    step : float, default = None
+        Grid spacing in keV. If omitted, the smallest median bin width among the
+        input spectra is used.
+
+    Returns
+    -------
+    1D numpy array
+        Monotonic energy bin edges spanning the common overlap region.
+    '''
+    if len(spectra) < 2:
+        raise ValueError('At least two spectra are required')
+
+    left_edge = max(np.min(spectrum.bin_edge_list) for spectrum in spectra)
+    right_edge = min(np.max(spectrum.bin_edge_list) for spectrum in spectra)
+
+    if right_edge <= left_edge:
+        raise ValueError('Spectra do not overlap in energy')
+
+    if step is None:
+        step = min(np.median(spectrum.bin_widths()) for spectrum in spectra)
+
+    if step <= 0:
+        raise ValueError('Grid spacing must be positive')
+
+    n_steps = int(np.floor((right_edge - left_edge) / step))
+    edges = left_edge + step * np.arange(n_steps + 1)
+
+    if edges[-1] < right_edge:
+        edges = np.append(edges, right_edge)
+
+    return edges
+
+
+def subtract_spectra(spectrum, background, scale=1.0, target_edges=None, step=None):
+    '''Subtract one spectrum from another in energy space.
+
+    Parameters
+    ----------
+    spectrum : Spectrum
+        The foreground spectrum.
+    background : Spectrum
+        The background spectrum to subtract.
+    scale : float, default = 1.0
+        Scaling factor applied to the background before subtraction.
+    target_edges : 1DArray, default = None
+        Shared energy grid. If omitted, a common grid is created automatically.
+    step : float, default = None
+        Grid spacing used when target_edges is not supplied.
+
+    Returns
+    -------
+    Spectrum
+        The background-subtracted spectrum on the shared energy grid.
+    '''
+    if target_edges is None:
+        target_edges = common_energy_edges(spectrum, background, step=step)
+
+    spectrum_rebinned = spectrum.to_common_energy_grid(target_edges)
+    background_rebinned = background.to_common_energy_grid(target_edges)
+    subtracted_density = spectrum_rebinned.cps_list - scale * background_rebinned.cps_list
+
+    return Spectrum(target_edges, subtracted_density)
+
 # A linear function for fitting
 def cfit_lin(x,a,b):
     return a*x + b
@@ -68,7 +171,7 @@ def spectrum_from_mca(MCA_input):
             #Checks if the calibration pairs ended
             if line_str == "<<ROI>>":
                 if Calib_start == False:
-                    print("ERROR: No calibration data in .mca file")
+                    print(f'ERROR: No calibration data in {MCA_input} file')
                     return -1
                 Calib_start = False
                 
@@ -152,5 +255,5 @@ def get_Spectra_from_mca(FileName_list_input):
         Spectrum_list.append(Spect_curr)
     return Spectrum_list
 
-spectrum_from_mca('MCA/BG.mca')
+#spectrum_from_mca('MCA/BG.mca')
 
