@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
-#TODO: Error propagation for spectrum subtraction
+
 class Spectrum:
     '''Stores one spectrum with bin edges, normalized counts, and the mean energy.
 
@@ -46,22 +46,40 @@ class Spectrum:
 
         source_cps_integral = np.asarray(self.cps_list) * source_widths
         source_error_integral = np.asanyarray(self.cps_error_list) * source_widths
-        source_variance_integral = source_error_integral ** 2
 
-        # Cumulative counts per second and cumulative variance at the source bin edges.
-        # Interpolating the cumulative integrals preserves the total area of the histogram,
-        # instead of interpolating the densities directly.
-        cumulative_counts = np.concatenate(([0.0], np.cumsum(source_cps_integral)))
-        cumulative_variance = np.concatenate(([0.0], np.cumsum(source_variance_integral)))
+        # Accumulate the contribution of each source bin into each target bin by overlap length.
+        rebinned_cps_integral = np.zeros(len(target_widths))
+        # For Poisson data, a fractional overlap contributes variance proportional to the overlap fraction.
+        rebinned_error_integral = np.zeros(len(target_widths))
 
-        # Interpolate the cumulative integrals at the new edges.
-        rebinned_cumulative = np.interp(target_edges, source_edges, cumulative_counts)
-        rebinned_cumulative_variance = np.interp(target_edges, source_edges, cumulative_variance)
+        for i in range(len(target_widths)):
+            left_edge = target_edges[i]
+            right_edge = target_edges[i + 1]
 
-        # Recover the rebinned bin integrals from successive cumulative values.
-        rebinned_cps_integral = np.diff(rebinned_cumulative)
-        # Variance of each rebinned bin comes from the change in cumulative variance.
-        rebinned_error_integral = np.sqrt(np.clip(np.diff(rebinned_cumulative_variance), 0.0, None))
+            source_start = np.searchsorted(source_edges, left_edge, side='right') - 1
+            source_end = np.searchsorted(source_edges, right_edge, side='left')
+
+            source_start = max(source_start, 0)
+            source_end = min(source_end, len(source_widths))
+
+            for j in range(source_start, source_end + 1):
+                if j < 0 or j >= len(source_widths):
+                    continue
+
+                overlap_left = max(left_edge, source_edges[j])
+                overlap_right = min(right_edge, source_edges[j + 1])
+                overlap_width = overlap_right - overlap_left
+
+                if overlap_width <= 0:
+                    continue
+
+                # A source bin only contributes by the fraction that lies inside the target bin.
+                overlap_fraction = overlap_width / source_widths[j]
+                rebinned_cps_integral[i] += source_cps_integral[j] * overlap_fraction
+                rebinned_error_integral[i] += source_error_integral[j] ** 2 * overlap_fraction
+
+            # Convert variance to standard deviation after summing all source-bin contributions.
+        rebinned_error_integral = np.sqrt(rebinned_error_integral)
 
         # Convert the rebinned integrals back to densities.
         rebinned_density = rebinned_cps_integral / target_widths
