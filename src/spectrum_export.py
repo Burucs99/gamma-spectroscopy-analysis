@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
+
 class Spectrum:
     '''Stores one spectrum with bin edges, normalized counts, and the mean energy.
 
@@ -12,9 +13,10 @@ class Spectrum:
         The counts per second in each bin of the spectrum normalized by the bin width in energy.
     '''
 
-    def __init__(self, bin_edge_list, cps_list):
+    def __init__(self, bin_edge_list, cps_list, cps_error_list):
         self.bin_edge_list = bin_edge_list
         self.cps_list = cps_list
+        self.cps_error_list = cps_error_list
         E_mean = 0
         for i in range(len(cps_list)):
             E_curr = (bin_edge_list[i]+bin_edge_list[i+1])/2
@@ -40,89 +42,49 @@ class Spectrum:
         source_edges = np.asarray(self.bin_edge_list)
         target_edges = np.asarray(target_edges)
         source_widths = np.diff(source_edges)
-        source_counts_per_second = np.asarray(self.cps_list) * source_widths
-
-        # Cumulative counts per second at the source bin edges.
-        cumulative_counts = np.concatenate(([0.0], np.cumsum(source_counts_per_second)))
-
-        # Interpolate the cumulative histogram at the new edges and differentiate.
-        rebinned_cumulative = np.interp(target_edges, source_edges, cumulative_counts)
-        rebinned_counts_per_second = np.diff(rebinned_cumulative)
         target_widths = np.diff(target_edges)
-        rebinned_density = rebinned_counts_per_second / target_widths
 
-        return Spectrum(target_edges, rebinned_density)
+        source_cps_integral = np.asarray(self.cps_list) * source_widths
+        source_error_integral = np.asanyarray(self.cps_error_list) * source_widths
 
+        # Accumulate the contribution of each source bin into each target bin by overlap length.
+        rebinned_cps_integral = np.zeros(len(target_widths))
+        # For Poisson data, a fractional overlap contributes variance proportional to the overlap fraction.
+        rebinned_error_integral = np.zeros(len(target_widths))
 
-def common_energy_edges(*spectra, step=None):
-    '''Build a shared energy grid for spectra subtraction.
+        for i in range(len(target_widths)):
+            left_edge = target_edges[i]
+            right_edge = target_edges[i + 1]
 
-    Parameters
-    ----------
-    spectra : Spectrum
-        One or more spectra to align.
-    step : float, default = None
-        Grid spacing in keV. If omitted, the smallest median bin width among the
-        input spectra is used.
+            source_start = np.searchsorted(source_edges, left_edge, side='right') - 1
+            source_end = np.searchsorted(source_edges, right_edge, side='left')
 
-    Returns
-    -------
-    1D numpy array
-        Monotonic energy bin edges spanning the common overlap region.
-    '''
-    if len(spectra) < 2:
-        raise ValueError('At least two spectra are required')
+            source_start = max(source_start, 0)
+            source_end = min(source_end, len(source_widths))
 
-    left_edge = max(np.min(spectrum.bin_edge_list) for spectrum in spectra)
-    right_edge = min(np.max(spectrum.bin_edge_list) for spectrum in spectra)
+            for j in range(source_start, source_end + 1):
+                if j < 0 or j >= len(source_widths):
+                    continue
 
-    if right_edge <= left_edge:
-        raise ValueError('Spectra do not overlap in energy')
+                overlap_left = max(left_edge, source_edges[j])
+                overlap_right = min(right_edge, source_edges[j + 1])
+                overlap_width = overlap_right - overlap_left
 
-    if step is None:
-        step = min(np.median(spectrum.bin_widths()) for spectrum in spectra)
+                if overlap_width <= 0:
+                    continue
 
-    if step <= 0:
-        raise ValueError('Grid spacing must be positive')
+                # A source bin only contributes by the fraction that lies inside the target bin.
+                overlap_fraction = overlap_width / source_widths[j]
+                rebinned_cps_integral[i] += source_cps_integral[j] * overlap_fraction
+                rebinned_error_integral[i] += source_error_integral[j] ** 2 * overlap_fraction
 
-    n_steps = int(np.floor((right_edge - left_edge) / step))
-    edges = left_edge + step * np.arange(n_steps + 1)
+            # Convert variance to standard deviation after summing all source-bin contributions.
+        rebinned_error_integral = np.sqrt(rebinned_error_integral)
 
-    if edges[-1] < right_edge:
-        edges = np.append(edges, right_edge)
-
-    return edges
-
-
-def subtract_spectra(spectrum, background, scale=1.0, target_edges=None, step=None):
-    '''Subtract one spectrum from another in energy space.
-
-    Parameters
-    ----------
-    spectrum : Spectrum
-        The foreground spectrum.
-    background : Spectrum
-        The background spectrum to subtract.
-    scale : float, default = 1.0
-        Scaling factor applied to the background before subtraction.
-    target_edges : 1DArray, default = None
-        Shared energy grid. If omitted, a common grid is created automatically.
-    step : float, default = None
-        Grid spacing used when target_edges is not supplied.
-
-    Returns
-    -------
-    Spectrum
-        The background-subtracted spectrum on the shared energy grid.
-    '''
-    if target_edges is None:
-        target_edges = common_energy_edges(spectrum, background, step=step)
-
-    spectrum_rebinned = spectrum.to_common_energy_grid(target_edges)
-    background_rebinned = background.to_common_energy_grid(target_edges)
-    subtracted_density = spectrum_rebinned.cps_list - scale * background_rebinned.cps_list
-
-    return Spectrum(target_edges, subtracted_density)
+        # Convert the rebinned integrals back to densities.
+        rebinned_density = rebinned_cps_integral / target_widths
+        rebinned_error = rebinned_error_integral / target_widths
+        return Spectrum(target_edges, rebinned_density, rebinned_error)
 
 # A linear function for fitting
 def cfit_lin(x,a,b):
@@ -213,22 +175,21 @@ def spectrum_from_mca(MCA_input):
     a, b = popt
 
     #Creates the channel number array
-    ch_bins = np.arange(len(Data_list))
     ch_edges = np.arange(len(Data_list) + 1) - 0.5
     #Converts channel numbers to energy values
-    E_bins = cfit_lin(ch_bins, a, b)
     E_edges = cfit_lin(ch_edges, a, b)
+
     #Calculates cps
     cps_data = np.array(Data_list)/REAL_TIME
-    
+    cps_err = np.sqrt(np.array(Data_list))/REAL_TIME
     #This is the width of each bin in energy
     #TODO: Should make this more general if calibration is not linear
     dE = a
     #Divide the counts by the bin width so different calibrations
     #can be shown together
     cps_norm = cps_data/dE
-
-    Spect = Spectrum(E_edges, cps_norm)
+    cps_norm_err = cps_err/dE
+    Spect = Spectrum(E_edges, cps_norm, cps_norm_err)
     #return [cps_norm, E_bins]
     return Spect
 
@@ -257,3 +218,79 @@ def get_Spectra_from_mca(FileName_list_input):
 
 #spectrum_from_mca('MCA/BG.mca')
 
+def common_energy_edges(*spectra, step=None):
+    '''Build a shared energy grid for spectra subtraction.
+
+    Parameters
+    ----------
+    spectra : Spectrum
+        One or more spectra to align.
+    step : float, default = None
+        Grid spacing in keV. If omitted, the smallest median bin width among the
+        input spectra is used.
+
+    Returns
+    -------
+    1D numpy array
+        Monotonic energy bin edges spanning the common overlap region.
+    '''
+    if len(spectra) < 2:
+        raise ValueError('At least two spectra are required')
+
+    left_edge = max(np.min(spectrum.bin_edge_list) for spectrum in spectra)
+    right_edge = min(np.max(spectrum.bin_edge_list) for spectrum in spectra)
+
+    if right_edge <= left_edge:
+        raise ValueError('Spectra do not overlap in energy')
+
+    
+    if step is None:
+        # This is the minimum of the median bin width across spectra
+        # It is chosen because if one of the spectra has fine details it mostly conserves those but it's not overly fine so nothing get's overly interpolated
+        step = min(np.median(spectrum.bin_widths()) for spectrum in spectra)
+
+    if step <= 0:
+        raise ValueError('Grid spacing must be positive')
+    
+    # How many steps make up the histogram
+    n_steps = int(np.floor((right_edge - left_edge) / step))
+    # New edges -> Steps from the left edge
+    edges = left_edge + step * np.arange(n_steps + 1)
+
+    #Puts the right edge at the end if neccesary
+    if edges[-1] < right_edge:
+        edges = np.append(edges, right_edge)
+
+    return edges
+
+
+def subtract_spectra(spectrum, background, target_edges=None, step=None):
+    '''Subtract one spectrum from another in energy space.
+
+    Parameters
+    ----------
+    spectrum : Spectrum
+        The foreground spectrum.
+    background : Spectrum
+        The background spectrum to subtract.
+    target_edges : 1DArray, default = None
+        Shared energy grid. If omitted, a common grid is created automatically.
+    step : float, default = None
+        Grid spacing used when target_edges is not supplied.
+
+    Returns
+    -------
+    Spectrum
+        The background-subtracted spectrum on the shared energy grid.
+    '''
+    if target_edges is None:
+        target_edges = common_energy_edges(spectrum, background, step=step)
+
+    #Rebin the spectrum and the BG to a commmon energy grid using the target_edges
+    spectrum_rebinned = spectrum.to_common_energy_grid(target_edges)
+    background_rebinned = background.to_common_energy_grid(target_edges)
+    #Subtracting the cps on that new energy grid
+    subtracted_density = spectrum_rebinned.cps_list - background_rebinned.cps_list
+
+    subtracted_error = np.sqrt((spectrum_rebinned.cps_error_list)**2 + (background_rebinned.cps_error_list)**2)
+    return Spectrum(target_edges, subtracted_density, subtracted_error)

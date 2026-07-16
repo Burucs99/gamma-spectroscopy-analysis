@@ -2,7 +2,7 @@ from spectrum_export import get_Spectra_from_mca
 import matplotlib.pyplot as plt
 import numpy as np
 
-def plot_Spectrum(Spectrum_list, yscale = 'linear', save_as = None, energy_min = 0, energy_max = 5e3):
+def plot_Spectrum(Spectrum_list, yscale = 'linear', save_as = None, energy_min = 0, energy_max = 5e3, show_errors = True):
     '''
     Plots one or more spectra on the same figure from Spectrum objects. 
 
@@ -17,7 +17,9 @@ def plot_Spectrum(Spectrum_list, yscale = 'linear', save_as = None, energy_min =
     energy_min: double, default = 0
         The minimum energy, where the plot should start.
     energy_max: double, default = 1e4
-        The maximum energy, where the plot should end. 
+        The maximum energy, where the plot should end.
+    show_errors: boolean, default = True
+        Decides if errors should be shown or not. 
     '''
     N = len(Spectrum_list)
 
@@ -35,7 +37,15 @@ def plot_Spectrum(Spectrum_list, yscale = 'linear', save_as = None, energy_min =
     for i in range(N):
 
         #Plot the spectrum using filled bin edges and counts per bin
-        plt.stairs(Spectrum_list[i].cps_list, Spectrum_list[i].bin_edge_list, label = f'{i}, mean = {Spectrum_list[i].E_mean:.2f} keV')
+        spec = Spectrum_list[i]
+        edges = spec.bin_edge_list
+        y = spec.cps_list
+        sigma = spec.cps_error_list
+
+        #Plot the spectrum using filled bin edges and counts per bin
+        plt.stairs(y, edges, label = f'{[i]}, mean = {spec.E_mean:.2f} keV')
+        if show_errors:
+            plt.fill_between(edges[:-1], y - sigma, y + sigma, step = 'post', alpha = 0.25)
     
     #Apply the input yscale
     plt.yscale(yscale)
@@ -51,7 +61,7 @@ def plot_Spectrum(Spectrum_list, yscale = 'linear', save_as = None, energy_min =
 
     plt.show()
 
-def plot_from_files(FileName_list, yscale = 'linear', save_as = None, energy_min = 0, energy_max = 1e5):
+def plot_from_files(FileName_list, yscale = 'linear', save_as = None, energy_min = 0, energy_max = 5e3, show_errors = True):
     '''
     Plots multiple spectra on the same figure from .mca files
 
@@ -65,8 +75,10 @@ def plot_from_files(FileName_list, yscale = 'linear', save_as = None, energy_min
         The name of the saved output .png file. If not specified, the plot will not be saved. The .png should be omitted from the end. The output will be saved in the Plot_Output/ folder.
     energy_min: double, default = 0
         The minimum energy, where the plot should start.
-    energy_max: double, default = 1e4
-        The maximum energy, where the plot should end. 
+    energy_max: double, default = 5e3
+        The maximum energy, where the plot should end.
+    show_errors: boolean, default = True
+        Decides if errors should be shown or not
     '''
 
     N = len(FileName_list)
@@ -84,10 +96,16 @@ def plot_from_files(FileName_list, yscale = 'linear', save_as = None, energy_min
 
     #Loop through every spectrum
     for i in range(N):
+        spec = Spectrum_list[i]
+        edges = spec.bin_edge_list
+        y = spec.cps_list
+        sigma = spec.cps_error_list
 
         #Plot the spectrum using filled bin edges and counts per bin
-        plt.stairs(Spectrum_list[i].cps_list, Spectrum_list[i].bin_edge_list, label = f'{FileName_list[i]}, mean = {Spectrum_list[i].E_mean:.2f} keV')
-    
+        plt.stairs(y, edges, label = f'{FileName_list[i]}, mean = {spec.E_mean:.2f} keV')
+        if show_errors:
+            plt.fill_between(edges[:-1], y - sigma, y + sigma, step = 'post', alpha = 0.25)
+
     #Apply the input yscale
     plt.yscale(yscale)
     plt.xlim(energy_min, energy_max)
@@ -109,10 +127,6 @@ def plot_isotope(Isotope_Name):
     ----------
     Isotope_Name: string
         Name of the isotope whished to be plotted.
-    
-    Returns
-    -------
-    None
     '''
     shield_list = ['Ures', 'Papir', 'Viz', 'Fem']
     isotope_shield_list = shield_list
@@ -121,7 +135,3 @@ def plot_isotope(Isotope_Name):
     plot_from_files(isotope_shield_list, yscale='log', save_as=f'{Isotope_Name}_All_Shielding', energy_min=0, energy_max=2000)
         
 
-if __name__ == "__main__":
-    #Example usage
-    plot_from_files(['BG_04_21_R', 'Co_Fem_R', 'Co_Papir_R', 'Co_Ures_R_30min', 'Co_Ures_R_60min'], yscale='log', save_as='Co_Compare', energy_min=0, energy_max=2000)
-    #plot_isotope('Ba')
