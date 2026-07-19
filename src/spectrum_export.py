@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import curve_fit
-
+import pandas as pd
 
 class Spectrum:
     '''Stores one spectrum with bin edges, normalized counts, and the mean energy.
@@ -13,10 +13,12 @@ class Spectrum:
         The counts per second in each bin of the spectrum normalized by the bin width in energy.
     '''
 
-    def __init__(self, bin_edge_list, cps_list, cps_error_list):
+    def __init__(self, bin_edge_list, cps_list, cps_error_list, ROI_list):
         self.bin_edge_list = bin_edge_list
         self.cps_list = cps_list
         self.cps_error_list = cps_error_list
+        self.ROI_list = ROI_list
+
         E_mean = 0
         for i in range(len(cps_list)):
             E_curr = (bin_edge_list[i]+bin_edge_list[i+1])/2
@@ -106,10 +108,11 @@ def spectrum_from_mca(MCA_input):
 
     #Data will go here
     Data_list = []
-    
+    ROI_list_ch = []
     #Booleans to help reading the files
     Data_start = False
     Calib_start = False
+    ROI_start = False
     REAL_TIME = 0
     
     #The given calibration value pairs
@@ -136,11 +139,12 @@ def spectrum_from_mca(MCA_input):
                     print(f'ERROR: No calibration data in {MCA_input} file')
                     return -1
                 Calib_start = False
-                
+                ROI_start = True
                 continue
 
             #Checks where the DATA starts in the input file
             if line_str == "<<DATA>>":
+                ROI_start = False
                 Data_start = True
                 continue
             
@@ -149,6 +153,9 @@ def spectrum_from_mca(MCA_input):
                 Data_start = False
                 continue
             
+            if ROI_start == True:
+                ROI = list(map(int, line_str.split(" ")))
+                ROI_list_ch.append(ROI)
 
             #Puts the hit data into a list
             if Data_start == True:
@@ -169,6 +176,7 @@ def spectrum_from_mca(MCA_input):
     #Convert to np arrays            
     Calib_ch_np = np.array(Calib_ch)
     Calib_E_np = np.array(Calib_E)
+    ROI_list_ch_np = np.array(ROI_list_ch)
 
     #Fits a line on the given pairs using curve_fit
     popt, _ = curve_fit(cfit_lin, Calib_ch_np, Calib_E_np)
@@ -179,18 +187,23 @@ def spectrum_from_mca(MCA_input):
     #Converts channel numbers to energy values
     E_edges = cfit_lin(ch_edges, a, b)
 
+    ROI_list_E = np.empty_like(ROI_list_ch, dtype=float)
+    ROI_list_E[:,0] = cfit_lin(ROI_list_ch_np[:,0], a, b)
+    ROI_list_E[:,1] = cfit_lin(ROI_list_ch_np[:,1], a, b)
+    sort_indeces = np.argsort(ROI_list_E[:,0])
+    ROI_list_E_sorted = ROI_list_E[sort_indeces]
     #Calculates cps
     cps_data = np.array(Data_list)/REAL_TIME
     cps_err = np.sqrt(np.array(Data_list))/REAL_TIME
     #This is the width of each bin in energy
     #TODO: Should make this more general if calibration is not linear
     dE = a
+
     #Divide the counts by the bin width so different calibrations
     #can be shown together
     cps_norm = cps_data/dE
     cps_norm_err = cps_err/dE
-    Spect = Spectrum(E_edges, cps_norm, cps_norm_err)
-    #return [cps_norm, E_bins]
+    Spect = Spectrum(E_edges, cps_norm, cps_norm_err, ROI_list_E_sorted)
     return Spect
 
 def get_Spectra_from_mca(FileName_list_input):
@@ -293,4 +306,51 @@ def subtract_spectra(spectrum, background, target_edges=None, step=None):
     subtracted_density = spectrum_rebinned.cps_list - background_rebinned.cps_list
 
     subtracted_error = np.sqrt((spectrum_rebinned.cps_error_list)**2 + (background_rebinned.cps_error_list)**2)
-    return Spectrum(target_edges, subtracted_density, subtracted_error)
+    #Keeps the ROI list of the spectrum, throws away the BG
+    return Spectrum(target_edges, subtracted_density, subtracted_error, spectrum.ROI_list)
+
+
+def ROI_check(Spectrum, Target_Peak_list):
+    ROI_list = Spectrum.ROI_list
+    Peaks_Found_list = []
+    for i in range(len(Target_Peak_list)):
+        peak = Target_Peak_list[i]
+        Peak_found = False
+        for j in range(len(ROI_list)):
+            #print(j)
+            if ROI_list[j][0] < peak and ROI_list[j][1] > peak:
+                Peak_found = True
+            if ROI_list[j][0] > peak:
+                break
+        Peaks_Found_list.append(Peak_found)
+    #print(Target_Peak_list)
+    #print(ROI_list)
+    #print(Peaks_Found_list)
+
+    return Peaks_Found_list
+
+def Check_Isotope_Peaks(IsotopeName):
+    peak_df = pd.read_csv('src/Target_Peaks.csv')
+    Isotope_Peaks = peak_df.loc[peak_df['Isotope'] == IsotopeName, 'Energy'].values
+
+    shield_list = ['Ures', 'Papir', 'Viz', 'Fem']
+    rows = []
+    for i in range(len(shield_list)):
+        mca_name = f'{IsotopeName}_{shield_list[i]}'
+        Spec = get_Spectra_from_mca([f'{mca_name}_R'])[0]
+        peak_checks = ROI_check(Spec, Isotope_Peaks)
+        rows.append([mca_name, *peak_checks])
+
+    result_df = pd.DataFrame(rows, columns=['MCA_Name', *Isotope_Peaks.tolist()])
+    return result_df
+    
+Eu_df = Check_Isotope_Peaks('Eu')
+Ba_df = Check_Isotope_Peaks('Ba')
+Am_df = Check_Isotope_Peaks('Am')
+Cs_df = Check_Isotope_Peaks('Cs')
+
+
+Eu_df.to_csv('Eu_Peaks_Found.csv', index = None)
+Ba_df.to_csv('Ba_Peaks_Found.csv', index = None)
+Am_df.to_csv('Am_Peaks_Found.csv', index = None)
+Cs_df.to_csv('Cs_Peaks_Found.csv', index = None)
