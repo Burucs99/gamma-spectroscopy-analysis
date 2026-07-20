@@ -3,30 +3,108 @@ from scipy.optimize import curve_fit
 import pandas as pd
 
 class Spectrum:
-    '''Stores one spectrum with bin edges, normalized counts, and the mean energy.
+    '''Stores one spectrum together with optional linear calibration metadata.
 
     Parameters
     -----------
     bin_edge_list : 1DArray
-        The energy values corresponding to the bin edges in the spectrum.
+        The x-axis values corresponding to the bin edges in the spectrum.
     cps_list : 1DArray
-        The counts per second in each bin of the spectrum normalized by the bin width in energy.
+        The counts per second in each bin of the spectrum.
+    cps_error_list : 1DArray
+        The uncertainty on cps_list.
+    ROI_list : 1DArray
+        Regions of interest on the same x-axis as bin_edge_list.
+    calibration_slope : float, default = None
+        Linear calibration slope used to convert channels to energy.
+    calibration_offset : float, default = None
+        Linear calibration offset used to convert channels to energy.
+    calibrated : bool, default = False
+        True if bin_edge_list and ROI_list already live in energy space.
     '''
 
-    def __init__(self, bin_edge_list, cps_list, cps_error_list, ROI_list):
-        self.bin_edge_list = bin_edge_list
-        self.cps_list = cps_list
-        self.cps_error_list = cps_error_list
-        self.ROI_list = ROI_list
+    def __init__(self, bin_edge_list, cps_list, cps_error_list, ROI_list, calibration_slope=None, calibration_offset=None, calibrated=False):
+        self.bin_edge_list = np.asarray(bin_edge_list, dtype=float)
+        self.cps_list = np.asarray(cps_list, dtype=float)
+        self.cps_error_list = np.asarray(cps_error_list, dtype=float)
+        self.ROI_list = None if ROI_list is None else np.asarray(ROI_list, dtype=int)
+        # Keep calibration metadata on the object so the same spectrum can be viewed
+        # either in raw channel space or converted to energy on demand.
+        self.calibration_slope = calibration_slope
+        self.calibration_offset = calibration_offset
+        self.calibrated = calibrated
 
-        E_mean = 0
-        for i in range(len(cps_list)):
-            E_curr = (bin_edge_list[i]+bin_edge_list[i+1])/2
-            E_mean += E_curr*cps_list[i]
-        self.E_mean = E_mean/np.sum(cps_list)
+        self.E_mean = self._compute_mean_axis_value()
+
+    def _compute_mean_axis_value(self):
+        if len(self.cps_list) == 0:
+            return 0.0
+
+        bin_centers = (self.bin_edge_list[:-1] + self.bin_edge_list[1:]) / 2
+        if self.calibrated or self.calibration_slope is None or self.calibration_offset is None:
+            axis_centers = bin_centers
+        else:
+            axis_centers = self.calibration_slope * bin_centers + self.calibration_offset
+
+        total_weight = np.sum(self.cps_list)
+        if total_weight == 0:
+            return 0.0
+
+        return np.sum(axis_centers * self.cps_list) / total_weight
 
     def bin_widths(self):
         return np.diff(self.bin_edge_list)
+
+    def _roi_to_energy(self, roi_list):
+        if roi_list is None:
+            return None
+        if self.calibration_slope is None or self.calibration_offset is None:
+            raise ValueError('Calibration constants are required to convert ROIs to energy')
+
+        # Convert each ROI boundary with the same linear calibration as the spectrum.
+        roi_array = np.asarray(roi_list, dtype=float)
+        energy_roi = np.empty_like(roi_array, dtype=float)
+        energy_roi[:, 0] = self.calibration_slope * roi_array[:, 0] + self.calibration_offset
+        energy_roi[:, 1] = self.calibration_slope * roi_array[:, 1] + self.calibration_offset
+        return energy_roi[np.argsort(energy_roi[:, 0])]
+
+    def to_energy(self):
+        '''Return a calibrated copy of the spectrum in energy space.'''
+        if self.calibration_slope is None or self.calibration_offset is None:
+            raise ValueError('No calibration constants are stored on this spectrum')
+
+        if self.calibrated:
+            # Already in energy space, so only return a detached copy.
+            return Spectrum(
+                self.bin_edge_list.copy(),
+                self.cps_list.copy(),
+                self.cps_error_list.copy(),
+                None if self.ROI_list is None else self.ROI_list.copy(),
+                calibration_slope=self.calibration_slope,
+                calibration_offset=self.calibration_offset,
+                calibrated=True,
+            )
+
+        energy_edges = self.calibration_slope * self.bin_edge_list + self.calibration_offset
+        source_widths = self.bin_widths()
+        energy_widths = np.diff(energy_edges)
+
+    # Re-express the bin contents as densities on the calibrated axis.
+        source_integral = self.cps_list * source_widths
+        source_error_integral = self.cps_error_list * source_widths
+
+        energy_density = source_integral / energy_widths
+        energy_error = source_error_integral / energy_widths
+
+        return Spectrum(
+            energy_edges,
+            energy_density,
+            energy_error,
+            self._roi_to_energy(self.ROI_list),
+            calibration_slope=self.calibration_slope,
+            calibration_offset=self.calibration_offset,
+            calibrated=True,
+        )
 
     def to_common_energy_grid(self, target_edges):
         '''Rebins the spectrum onto a new energy grid while preserving bin integrals.
@@ -86,7 +164,15 @@ class Spectrum:
         # Convert the rebinned integrals back to densities.
         rebinned_density = rebinned_cps_integral / target_widths
         rebinned_error = rebinned_error_integral / target_widths
-        return Spectrum(target_edges, rebinned_density, rebinned_error)
+        return Spectrum(
+            target_edges,
+            rebinned_density,
+            rebinned_error,
+            None if self.ROI_list is None else self.ROI_list.copy(),
+            calibration_slope=self.calibration_slope,
+            calibration_offset=self.calibration_offset,
+            calibrated=True,
+        )
 
 # A linear function for fitting
 def cfit_lin(x,a,b):
@@ -103,7 +189,7 @@ def spectrum_from_mca(MCA_input):
     Returns
     -------
     Spectrum: Spectrum
-        A Spectrum object containing the energy bin edges and the normalized counts per second in each bin.
+        A Spectrum object containing the channel bin edges, counts per second, and stored linear calibration constants.
     '''
 
     #Data will go here
@@ -184,26 +270,14 @@ def spectrum_from_mca(MCA_input):
 
     #Creates the channel number array
     ch_edges = np.arange(len(Data_list) + 1) - 0.5
-    #Converts channel numbers to energy values
-    E_edges = cfit_lin(ch_edges, a, b)
-
-    ROI_list_E = np.empty_like(ROI_list_ch, dtype=float)
-    ROI_list_E[:,0] = cfit_lin(ROI_list_ch_np[:,0], a, b)
-    ROI_list_E[:,1] = cfit_lin(ROI_list_ch_np[:,1], a, b)
-    sort_indeces = np.argsort(ROI_list_E[:,0])
-    ROI_list_E_sorted = ROI_list_E[sort_indeces]
     #Calculates cps
     cps_data = np.array(Data_list)/REAL_TIME
     cps_err = np.sqrt(np.array(Data_list))/REAL_TIME
-    #This is the width of each bin in energy
-    #TODO: Should make this more general if calibration is not linear
-    dE = a
-
-    #Divide the counts by the bin width so different calibrations
-    #can be shown together
-    cps_norm = cps_data/dE
-    cps_norm_err = cps_err/dE
-    Spect = Spectrum(E_edges, cps_norm, cps_norm_err, ROI_list_E_sorted)
+    # Store the raw channel histogram together with the calibration constants.
+    ROI_list_ch_np = np.asarray(ROI_list_ch, dtype=int)
+    sort_indeces = np.argsort(ROI_list_ch_np[:,0])
+    ROI_list_ch_sorted = ROI_list_ch_np[sort_indeces]
+    Spect = Spectrum(ch_edges, cps_data, cps_err, ROI_list_ch_sorted, calibration_slope=a, calibration_offset=b, calibrated=False)
     return Spect
 
 def get_Spectra_from_mca(FileName_list_input):
@@ -337,7 +411,8 @@ def Check_Isotope_Peaks(IsotopeName):
     rows = []
     for i in range(len(shield_list)):
         mca_name = f'{IsotopeName}_{shield_list[i]}'
-        Spec = get_Spectra_from_mca([f'{mca_name}_R'])[0]
+        # This check is performed in energy space, so convert the imported spectrum here.
+        Spec = get_Spectra_from_mca([f'{mca_name}_R'])[0].to_energy()
         peak_checks = ROI_check(Spec, Isotope_Peaks)
         rows.append([mca_name, *peak_checks])
 

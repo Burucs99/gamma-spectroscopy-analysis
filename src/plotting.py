@@ -2,6 +2,13 @@ from spectrum_export import get_Spectra_from_mca
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+def _as_energy_spectrum(spec):
+    # Plotting is defined in energy space, so promote raw channel spectra lazily.
+    if getattr(spec, 'calibrated', False):
+        return spec
+    return spec.to_energy()
+
 def plot_Spectrum(Spectrum_list, yscale = 'linear', save_as = None, energy_min = 0, energy_max = 5e3, show_errors = True):
     '''
     Plots one or more spectra on the same figure from Spectrum objects. 
@@ -36,8 +43,8 @@ def plot_Spectrum(Spectrum_list, yscale = 'linear', save_as = None, energy_min =
     #Loop through every spectrum
     for i in range(N):
 
-        #Plot the spectrum using filled bin edges and counts per bin
-        spec = Spectrum_list[i]
+        # Plot the spectrum using the calibrated view when the input is still in channels.
+        spec = _as_energy_spectrum(Spectrum_list[i])
         edges = spec.bin_edge_list
         y = spec.cps_list
         sigma = spec.cps_error_list
@@ -96,7 +103,8 @@ def plot_from_files(FileName_list, yscale = 'linear', save_as = None, energy_min
 
     #Loop through every spectrum
     for i in range(N):
-        spec = Spectrum_list[i]
+        # Convert the imported raw MCA spectrum before plotting it.
+        spec = _as_energy_spectrum(Spectrum_list[i])
         edges = spec.bin_edge_list
         y = spec.cps_list
         sigma = spec.cps_error_list
